@@ -21,12 +21,12 @@ const state = {
   audioSource: "clip",
 };
 
-// Elementos <video> ocultos usados só para decodificar frames (preview e render)
-const previewBgVideo = document.createElement("video");
+// Fundo agora é uma IMAGEM estática (não vídeo). O clipe menor continua sendo <video>.
+const previewBgImage = new Image();
 const previewClipVideo = document.createElement("video");
-[previewBgVideo, previewClipVideo].forEach(v => {
-  v.muted = true; v.loop = true; v.playsInline = true;
-});
+previewClipVideo.muted = true;
+previewClipVideo.loop = true;
+previewClipVideo.playsInline = true;
 
 // ---------------------------------------------------------------------------
 // Referências DOM
@@ -66,8 +66,7 @@ bgInput.addEventListener("change", () => {
     state.backgroundFile = bgInput.files[0];
     bgLabel.textContent = state.backgroundFile.name;
     bgBtn.classList.add("filled");
-    previewBgVideo.src = URL.createObjectURL(state.backgroundFile);
-    previewBgVideo.play().catch(() => {});
+    previewBgImage.src = URL.createObjectURL(state.backgroundFile);
   }
 });
 
@@ -108,23 +107,27 @@ headlineYSlider.addEventListener("input", () => {
 // ---------------------------------------------------------------------------
 // Utilitário: desenha um vídeo cortado ("cover") num retângulo do canvas
 // ---------------------------------------------------------------------------
-function drawCover(ctx, video, dx, dy, dw, dh) {
-  if (!video.videoWidth) return;
-  const vRatio = video.videoWidth / video.videoHeight;
+function drawCover(ctx, media, dx, dy, dw, dh) {
+  // Funciona tanto para <video> (videoWidth/videoHeight) quanto para <img> (naturalWidth/naturalHeight)
+  const mediaW = media.videoWidth || media.naturalWidth;
+  const mediaH = media.videoHeight || media.naturalHeight;
+  if (!mediaW) return;
+
+  const mRatio = mediaW / mediaH;
   const dRatio = dw / dh;
   let sx, sy, sw, sh;
-  if (vRatio > dRatio) {
-    sh = video.videoHeight;
+  if (mRatio > dRatio) {
+    sh = mediaH;
     sw = sh * dRatio;
-    sx = (video.videoWidth - sw) / 2;
+    sx = (mediaW - sw) / 2;
     sy = 0;
   } else {
-    sw = video.videoWidth;
+    sw = mediaW;
     sh = sw / dRatio;
     sx = 0;
-    sy = (video.videoHeight - sh) / 2;
+    sy = (mediaH - sh) / 2;
   }
-  ctx.drawImage(video, sx, sy, sw, sh, dx, dy, dw, dh);
+  ctx.drawImage(media, sx, sy, sw, sh, dx, dy, dw, dh);
 }
 
 // Quebra de texto simples para caber na largura do canvas
@@ -183,9 +186,9 @@ function renderPreviewFrame() {
   const w = previewCanvas.width, h = previewCanvas.height;
   pctx.clearRect(0, 0, w, h);
 
-  // Fundo
-  if (previewBgVideo.videoWidth) {
-    drawCover(pctx, previewBgVideo, 0, 0, w, h);
+  // Fundo (imagem estática)
+  if (previewBgImage.naturalWidth) {
+    drawCover(pctx, previewBgImage, 0, 0, w, h);
   } else {
     pctx.fillStyle = "#1f3a5f";
     pctx.fillRect(0, 0, w, h);
@@ -244,31 +247,42 @@ function loadVideoElement(file) {
   });
 }
 
+// Carrega um File de imagem e resolve quando estiver pronta para desenhar
+function loadImageElement(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Falha ao carregar imagem ${file.name}`));
+  });
+}
+
 function updateStatus(msg) { statusText.textContent = msg; }
 function updateProgress(fraction) { progressFill.style.width = `${Math.round(fraction * 100)}%`; }
 
-async function renderSingleVideo(backgroundVideo, clipVideo, headlineText, audioContext) {
+async function renderSingleVideo(backgroundImage, clipVideo, headlineText, audioContext) {
   const canvas = document.createElement("canvas");
   canvas.width = OUTPUT_W;
   canvas.height = OUTPUT_H;
   const ctx = canvas.getContext("2d");
 
-  const duration = clipVideo.duration; // duração final = duração do vídeo menor
+  const duration = clipVideo.duration; // duração final = duração do vídeo menor (fundo é imagem, não tem duração própria)
 
-  // --- Prepara mixagem de áudio (Web Audio API) ---
+  // --- Prepara áudio (Web Audio API) — só existe áudio do vídeo menor, já que o fundo é imagem ---
   const destination = audioContext.createMediaStreamDestination();
   let audioSourceNode = null;
-  const chosenAudioVideo = state.audioSource === "background" ? backgroundVideo : clipVideo;
-  chosenAudioVideo.muted = false;
-  try {
-    audioSourceNode = audioContext.createMediaElementSource(chosenAudioVideo);
-    audioSourceNode.connect(destination);
-    // Não conecta ao alto-falante para evitar eco duplo durante a gravação
-  } catch (e) {
-    console.warn("Áudio indisponível para este par:", e);
+  if (state.audioSource === "clip") {
+    clipVideo.muted = false;
+    try {
+      audioSourceNode = audioContext.createMediaElementSource(clipVideo);
+      audioSourceNode.connect(destination);
+      // Não conecta ao alto-falante para evitar eco duplo durante a gravação
+    } catch (e) {
+      console.warn("Áudio indisponível para este par:", e);
+    }
   }
 
-  // --- Stream combinado: vídeo do canvas + áudio escolhido ---
+  // --- Stream combinado: vídeo do canvas + áudio escolhido (se houver) ---
   const canvasStream = canvas.captureStream(30);
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
@@ -287,16 +301,10 @@ async function renderSingleVideo(backgroundVideo, clipVideo, headlineText, audio
     recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
   });
 
-  // Posiciona ambos os vídeos no início e toca (fundo em loop, clipe uma vez)
-  backgroundVideo.currentTime = 0;
+  // Posiciona o clipe no início e toca (a imagem de fundo não precisa tocar, é estática)
   clipVideo.currentTime = 0;
-  backgroundVideo.loop = true;
   clipVideo.loop = false;
-
-  await Promise.all([
-    backgroundVideo.play(),
-    clipVideo.play(),
-  ]);
+  await clipVideo.play();
 
   recorder.start();
 
@@ -316,7 +324,7 @@ async function renderSingleVideo(backgroundVideo, clipVideo, headlineText, audio
       }
 
       ctx.clearRect(0, 0, OUTPUT_W, OUTPUT_H);
-      drawCover(ctx, backgroundVideo, 0, 0, OUTPUT_W, OUTPUT_H);
+      drawCover(ctx, backgroundImage, 0, 0, OUTPUT_W, OUTPUT_H); // fundo estático, redesenhado a cada frame
 
       ctx.save();
       ctx.beginPath();
@@ -333,7 +341,6 @@ async function renderSingleVideo(backgroundVideo, clipVideo, headlineText, audio
   });
 
   recorder.stop();
-  backgroundVideo.pause();
   clipVideo.pause();
   if (audioSourceNode) audioSourceNode.disconnect();
 
@@ -346,7 +353,7 @@ async function renderSingleVideo(backgroundVideo, clipVideo, headlineText, audio
 generateBtn.addEventListener("click", async () => {
   try {
     if (!state.backgroundFile) {
-      alert("Selecione um vídeo de fundo.");
+      alert("Selecione uma imagem de fundo.");
       return;
     }
     if (!state.clipFiles.length) {
@@ -371,8 +378,8 @@ generateBtn.addEventListener("click", async () => {
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const zip = new JSZip();
 
-    // Carrega o vídeo de fundo uma única vez (reutilizado em todos os pares)
-    const backgroundVideo = await loadVideoElement(state.backgroundFile);
+    // Carrega a imagem de fundo uma única vez (reutilizada em todos os pares)
+    const backgroundImage = await loadImageElement(state.backgroundFile);
 
     let successCount = 0;
     const errors = [];
@@ -383,7 +390,7 @@ generateBtn.addEventListener("click", async () => {
 
       try {
         const clipVideo = await loadVideoElement(state.clipFiles[i]);
-        const blob = await renderSingleVideo(backgroundVideo, clipVideo, headlines[i], audioContext);
+        const blob = await renderSingleVideo(backgroundImage, clipVideo, headlines[i], audioContext);
         zip.file(fileName, blob);
         successCount++;
         URL.revokeObjectURL(clipVideo.src);
