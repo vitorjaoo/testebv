@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estúdio de Vídeos em Massa</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --bg: #0b0c0f;
+    --panel: #14161b;
+    --panel-2: #1b1e25;
+    --line: #262a33;
+    --text: #e9ebef;
+    --muted: #8b93a1;
+    --accent: #ff5d3a;
+    --accent-dim: #7a2f1f;
+    --ok: #35c46a;
+    --mono: 'JetBrains Mono', 'Courier New', monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Arial, sans-serif;
+    min-height:100vh;
+  }
+  header{
+    padding:22px 28px; border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; gap:14px;
+  }
+  header h1{ font-size:18px; margin:0; letter-spacing:0.02em; }
+  header .tag{
+    font-family:var(--mono); font-size:11px; color:var(--accent);
+    background:var(--accent-dim); padding:3px 8px; border-radius:3px;
+    text-transform:uppercase; letter-spacing:0.08em;
+  }
+  header .sub{ color:var(--muted); font-size:13px; margin-left:auto; }
+
+  .layout{
+    display:grid; grid-template-columns: 460px 1fr;
+    gap:0; min-height:calc(100vh - 68px);
+  }
+  .col-left{
+    border-right:1px solid var(--line); padding:24px;
+    overflow-y:auto; max-height:calc(100vh - 68px);
+  }
+  .col-right{
+    padding:24px; display:flex; flex-direction:column; align-items:center;
+    justify-content:flex-start; gap:16px;
+  }
+
+  .section{ margin-bottom:26px; }
+  .section-title{
+    font-size:12px; text-transform:uppercase; letter-spacing:0.1em;
+    color:var(--muted); margin-bottom:12px; display:flex; align-items:center; gap:8px;
+  }
+  .section-title .num{
+    font-family:var(--mono); color:var(--accent); font-weight:700;
+  }
+
+  .filerow{ margin-bottom:12px; }
+  .filerow label{ display:block; font-size:13px; margin-bottom:6px; color:var(--text); }
+  .filebtn{
+    display:flex; align-items:center; gap:10px; width:100%;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    padding:10px 12px; cursor:pointer; color:var(--muted); font-size:13px;
+    transition: border-color .15s;
+  }
+  .filebtn:hover{ border-color:var(--accent); }
+  .filebtn.filled{ color:var(--ok); border-color:#1e3d2b; }
+  .filebtn input{ display:none; }
+  .filebtn .icon{ font-size:15px; }
+
+  textarea{
+    width:100%; background:var(--panel-2); border:1px solid var(--line);
+    border-radius:6px; color:var(--text); padding:12px; font-size:13px;
+    font-family:var(--mono); resize:vertical; min-height:110px; line-height:1.6;
+  }
+  textarea:focus{ outline:none; border-color:var(--accent); }
+
+  .slider-block{ margin-bottom:16px; }
+  .slider-top{
+    display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px;
+  }
+  .slider-top .val{ font-family:var(--mono); color:var(--accent); }
+  input[type=range]{
+    -webkit-appearance:none; width:100%; height:4px; background:var(--line);
+    border-radius:2px; outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:15px; height:15px; border-radius:50%;
+    background:var(--accent); cursor:pointer; border:2px solid #0b0c0f;
+  }
+
+  .radio-row{ display:flex; gap:16px; font-size:13px; margin-top:6px; }
+  .radio-row label{ display:flex; align-items:center; gap:6px; cursor:pointer; color:var(--muted); }
+  .radio-row input{ accent-color:var(--accent); }
+
+  select{
+    width:100%; background:var(--panel-2); border:1px solid var(--line);
+    color:var(--text); padding:9px 10px; border-radius:6px; font-size:13px;
+  }
+
+  .generate-btn{
+    width:100%; padding:16px; border:none; border-radius:8px;
+    background:var(--accent); color:#1a0d08; font-weight:700; font-size:15px;
+    letter-spacing:0.02em; cursor:pointer; transition: transform .1s, filter .15s;
+  }
+  .generate-btn:hover{ filter:brightness(1.08); }
+  .generate-btn:active{ transform:scale(0.99); }
+  .generate-btn:disabled{ background:#3a3d44; color:#8b93a1; cursor:not-allowed; }
+
+  .progress-wrap{ margin-top:14px; }
+  .progress-bar{
+    height:6px; background:var(--panel-2); border-radius:3px; overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .progress-fill{
+    height:100%; background:var(--accent); width:0%; transition:width .2s;
+  }
+  .status-text{
+    font-size:12px; color:var(--muted); margin-top:8px; font-family:var(--mono);
+    line-height:1.6; white-space:pre-wrap;
+  }
+
+  .preview-label{ font-size:12px; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase; }
+  .phone{
+    width:280px; height:498px; background:#000; border-radius:18px;
+    border:6px solid #26282e; position:relative; overflow:hidden;
+    box-shadow: 0 0 0 1px #000, 0 20px 60px rgba(0,0,0,0.5);
+  }
+  #previewCanvas{ width:100%; height:100%; display:block; }
+
+  .hint{
+    font-size:12px; color:var(--muted); text-align:center; max-width:280px;
+    line-height:1.6;
+  }
+  .legend{ display:flex; gap:14px; font-size:11px; color:var(--muted); }
+  .legend span{ display:flex; align-items:center; gap:5px; }
+  .swatch{ width:9px; height:9px; border-radius:2px; display:inline-block; }
+
+  code{ background:var(--panel-2); padding:1px 5px; border-radius:3px; font-family:var(--mono); font-size:12px; }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background:var(--line); border-radius:4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Estúdio de Vídeos em Massa</h1>
+  <span class="tag">Client-side</span>
+  <span class="sub">Roda 100% no seu navegador — nenhum vídeo é enviado a servidores</span>
+</header>
+
+<div class="layout">
+
+  <!-- ============================= COLUNA ESQUERDA ============================= -->
+  <div class="col-left">
+
+    <div class="section">
+      <div class="section-title"><span class="num">01</span> Arquivos de entrada</div>
+
+      <div class="filerow">
+        <label>Vídeo de fundo (.mp4)</label>
+        <label class="filebtn" id="bgBtn">
+          <span class="icon">📹</span><span id="bgLabel">Selecionar vídeo de fundo</span>
+          <input type="file" id="bgInput" accept="video/mp4,video/*">
+        </label>
+      </div>
+
+      <div class="filerow">
+        <label>Vídeos de recorte (selecione vários)</label>
+        <label class="filebtn" id="clipsBtn">
+          <span class="icon">🎞️</span><span id="clipsLabel">Selecionar recortes (múltiplos)</span>
+          <input type="file" id="clipsInput" accept="video/mp4,video/*" multiple>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><span class="num">02</span> Headlines (uma por linha)</div>
+      <textarea id="headlinesBox">Você não vai acreditar nisso...
+O segredo que ninguém te conta
+Isso mudou minha vida em 30 dias</textarea>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><span class="num">03</span> Calibragem visual</div>
+
+      <div class="slider-block">
+        <div class="slider-top"><span>Escala do vídeo menor</span><span class="val" id="scaleVal">70%</span></div>
+        <input type="range" id="scaleSlider" min="20" max="100" value="70">
+      </div>
+      <div class="slider-block">
+        <div class="slider-top"><span>Posição Y do vídeo menor</span><span class="val" id="clipYVal">35%</span></div>
+        <input type="range" id="clipYSlider" min="0" max="90" value="35">
+      </div>
+      <div class="slider-block">
+        <div class="slider-top"><span>Tamanho da fonte</span><span class="val" id="fontVal">55px</span></div>
+        <input type="range" id="fontSlider" min="20" max="120" value="55">
+      </div>
+      <div class="slider-block">
+        <div class="slider-top"><span>Posição Y da headline</span><span class="val" id="headlineYVal">8%</span></div>
+        <input type="range" id="headlineYSlider" min="0" max="90" value="8">
+      </div>
+
+      <label style="font-size:13px; display:block; margin-bottom:6px;">Áudio a manter</label>
+      <div class="radio-row">
+        <label><input type="radio" name="audio" value="clip" checked> Vídeo menor</label>
+        <label><input type="radio" name="audio" value="background"> Vídeo de fundo</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><span class="num">04</span> Gerar</div>
+      <button class="generate-btn" id="generateBtn">🎬 GERAR VÍDEOS EM MASSA</button>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="status-text" id="statusText">Pronto. Selecione os arquivos para começar.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================= COLUNA DIREITA ============================= -->
+  <div class="col-right">
+    <div class="preview-label">Preview em tempo real</div>
+    <div class="phone"><canvas id="previewCanvas" width="360" height="640"></canvas></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:#1f3a5f"></i> Vídeo de fundo</span>
+      <span><i class="swatch" style="background:#27ae60"></i> Vídeo menor</span>
+      <span><i class="swatch" style="background:#fff"></i> Headline</span>
+    </div>
+    <div class="hint">O preview mostra a composição usando os primeiros arquivos carregados. A renderização final usa <code>1080×1920</code> e roda inteiramente no seu navegador.</div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
