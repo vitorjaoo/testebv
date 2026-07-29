@@ -187,6 +187,13 @@
       <textarea id="headlinesBox">Você não vai acreditar nisso...
 O segredo que ninguém te conta
 Isso mudou minha vida em 30 dias</textarea>
+
+      <label style="font-size:13px; display:block; margin:10px 0 6px;">Modo de pareamento</label>
+      <select id="pairingSelect">
+        <option value="sequential">Sequencial — headline 1 no vídeo 1, headline 2 no vídeo 2...</option>
+        <option value="cycle">Repetir em ciclo — reaproveita as headlines até cobrir todos os vídeos</option>
+        <option value="same">Mesma headline em todos os vídeos (usa só a 1ª linha)</option>
+      </select>
     </div>
 
     <div class="section">
@@ -233,8 +240,8 @@ Isso mudou minha vida em 30 dias</textarea>
     <div class="section">
       <div class="section-title"><span class="num">04</span> Formato de saída</div>
       <select id="formatSelect">
-        <option value="mp4">MP4 (compatível com tudo — mais lento, converte após gravar)</option>
-        <option value="webm">WebM (mais rápido — pode não abrir em alguns apps de celular)</option>
+        <option value="mp4">MP4 (recomendado p/ Instagram — nativo e rápido no Chrome/Edge)</option>
+        <option value="webm">WebM (mais rápido em qualquer navegador, mas Instagram não aceita)</option>
       </select>
     </div>
 
