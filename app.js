@@ -21,6 +21,7 @@ const state = {
   headlineYPct: 0.08,
   audioSource: "clip",
   outputFormat: "mp4",
+  pairingMode: "sequential",
 };
 
 // Fundo agora é uma IMAGEM estática (não vídeo). O clipe menor continua sendo <video>.
@@ -58,12 +59,16 @@ const previewCanvas = document.getElementById("previewCanvas");
 const pctx = previewCanvas.getContext("2d");
 const fontSelect = document.getElementById("fontSelect");
 const formatSelect = document.getElementById("formatSelect");
+const pairingSelect = document.getElementById("pairingSelect");
 
 fontSelect.addEventListener("change", () => {
   state.fontFamily = fontSelect.value;
 });
 formatSelect.addEventListener("change", () => {
   state.outputFormat = formatSelect.value;
+});
+pairingSelect.addEventListener("change", () => {
+  state.pairingMode = pairingSelect.value;
 });
 
 // ---------------------------------------------------------------------------
@@ -293,6 +298,22 @@ function getReliableDuration(video) {
   });
 }
 
+// Detecta se o navegador consegue gravar MP4 nativamente com o MediaRecorder
+// (Chrome/Edge recentes suportam; Firefox/Safari geralmente não). Quando suportado,
+// isso é MUITO mais rápido do que gravar em WebM e converter depois com FFmpeg,
+// porque pula inteiramente o passo de conversão.
+const NATIVE_MP4_MIME = (() => {
+  const candidates = [
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+    "video/mp4;codecs=avc1,mp4a",
+    "video/mp4",
+  ];
+  for (const mime of candidates) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(mime)) return mime;
+  }
+  return null;
+})();
+
 function updateStatus(msg) { statusText.textContent = msg; }
 function updateProgress(fraction) { progressFill.style.width = `${Math.round(fraction * 100)}%`; }
 
@@ -364,8 +385,11 @@ async function renderSingleVideo(backgroundImage, clipVideo, headlineText, audio
     ...destination.stream.getAudioTracks(),
   ]);
 
+  const useNativeMp4 = state.outputFormat === "mp4" && NATIVE_MP4_MIME;
+  const recorderMime = useNativeMp4 ? NATIVE_MP4_MIME : "video/webm;codecs=vp9,opus";
+
   const recorder = new MediaRecorder(combinedStream, {
-    mimeType: "video/webm;codecs=vp9,opus",
+    mimeType: recorderMime,
     videoBitsPerSecond: 8_000_000,
   });
 
@@ -373,7 +397,10 @@ async function renderSingleVideo(backgroundImage, clipVideo, headlineText, audio
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
   const recordingDone = new Promise((resolve) => {
-    recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+    recorder.onstop = () => resolve({
+      blob: new Blob(chunks, { type: useNativeMp4 ? "video/mp4" : "video/webm" }),
+      isNativeMp4: useNativeMp4,
+    });
   });
 
   // Posiciona o clipe no início e toca (a imagem de fundo não precisa tocar, é estática)
@@ -445,9 +472,19 @@ generateBtn.addEventListener("click", async () => {
       return;
     }
 
-    const totalPairs = Math.min(headlines.length, state.clipFiles.length);
-    if (headlines.length !== state.clipFiles.length) {
-      const msg = `Você colou ${headlines.length} headline(s) mas selecionou ${state.clipFiles.length} vídeo(s) de recorte.\n\nSerão gerados apenas ${totalPairs} vídeo(s) (o par é feito 1 a 1, e para quando o grupo menor acabar).\n\nSe quiser gerar todos os ${state.clipFiles.length} vídeos, adicione mais headlines até ter a mesma quantidade.`;
+    const totalPairs = state.pairingMode === "sequential"
+      ? Math.min(headlines.length, state.clipFiles.length)
+      : state.clipFiles.length; // "cycle" e "same" sempre geram 1 vídeo por clipe
+
+    // Resolve qual headline usar em cada vídeo, conforme o modo escolhido
+    function headlineForIndex(i) {
+      if (state.pairingMode === "same") return headlines[0];
+      if (state.pairingMode === "cycle") return headlines[i % headlines.length];
+      return headlines[i]; // sequential
+    }
+
+    if (state.pairingMode === "sequential" && headlines.length !== state.clipFiles.length) {
+      const msg = `Você colou ${headlines.length} headline(s) mas selecionou ${state.clipFiles.length} vídeo(s) de recorte.\n\nSerão gerados apenas ${totalPairs} vídeo(s) (o par é feito 1 a 1, e para quando o grupo menor acabar).\n\nSe quiser gerar todos os ${state.clipFiles.length} vídeos, adicione mais headlines, ou troque o "Modo de pareamento" para "Repetir em ciclo" ou "Mesma headline em todos".`;
       alert(msg);
       updateStatus(`Aviso: ${headlines.length} headlines e ${state.clipFiles.length} vídeos. Gerando ${totalPairs} vídeo(s) pareados.`);
     }
@@ -461,6 +498,12 @@ generateBtn.addEventListener("click", async () => {
     try {
       await document.fonts.load(`900 100px ${state.fontFamily}`);
     } catch (e) { /* segue mesmo se falhar o preload; o navegador usa fallback */ }
+
+    if (state.outputFormat === "mp4" && NATIVE_MP4_MIME) {
+      updateStatus("Seu navegador grava MP4 nativamente — sem conversão extra, bem mais rápido.");
+    } else if (state.outputFormat === "mp4") {
+      updateStatus("Seu navegador não grava MP4 nativo — usando conversão via FFmpeg (mais lento). Considere usar Chrome ou Edge.");
+    }
 
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const zip = new JSZip();
@@ -477,14 +520,17 @@ generateBtn.addEventListener("click", async () => {
 
       try {
         const clipVideo = await loadVideoElement(state.clipFiles[i]);
-        const webmBlob = await renderSingleVideo(backgroundImage, clipVideo, headlines[i], audioContext);
+        const { blob, isNativeMp4 } = await renderSingleVideo(backgroundImage, clipVideo, headlineForIndex(i), audioContext);
 
-        if (state.outputFormat === "mp4") {
+        if (state.outputFormat === "mp4" && !isNativeMp4) {
+          // Fallback: navegador não grava mp4 nativamente (ex: Firefox) — converte via FFmpeg
           updateStatus(`Convertendo ${i + 1}/${totalPairs} para MP4 (pode levar um tempo)...`);
-          const mp4Blob = await convertWebmToMp4(webmBlob, fileBase);
+          const mp4Blob = await convertWebmToMp4(blob, fileBase);
           zip.file(`${fileBase}.mp4`, mp4Blob);
+        } else if (state.outputFormat === "mp4") {
+          zip.file(`${fileBase}.mp4`, blob); // já veio em mp4 direto da gravação, sem conversão
         } else {
-          zip.file(`${fileBase}.webm`, webmBlob);
+          zip.file(`${fileBase}.webm`, blob);
         }
 
         successCount++;
