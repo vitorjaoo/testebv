@@ -162,10 +162,10 @@
       <div class="section-title"><span class="num">01</span> Arquivos de entrada</div>
 
       <div class="filerow">
-        <label>Vídeo de fundo (.mp4)</label>
+        <label>Imagem de fundo (.jpg, .png)</label>
         <label class="filebtn" id="bgBtn">
-          <span class="icon">📹</span><span id="bgLabel">Selecionar vídeo de fundo</span>
-          <input type="file" id="bgInput" accept="video/mp4,video/*">
+          <span class="icon">🖼️</span><span id="bgLabel">Selecionar imagem de fundo</span>
+          <input type="file" id="bgInput" accept="image/*">
         </label>
       </div>
 
@@ -205,10 +205,10 @@ Isso mudou minha vida em 30 dias</textarea>
         <input type="range" id="headlineYSlider" min="0" max="90" value="8">
       </div>
 
-      <label style="font-size:13px; display:block; margin-bottom:6px;">Áudio a manter</label>
+      <label style="font-size:13px; display:block; margin-bottom:6px;">Áudio</label>
       <div class="radio-row">
-        <label><input type="radio" name="audio" value="clip" checked> Vídeo menor</label>
-        <label><input type="radio" name="audio" value="background"> Vídeo de fundo</label>
+        <label><input type="radio" name="audio" value="clip" checked> Usar áudio do vídeo menor</label>
+        <label><input type="radio" name="audio" value="none"> Sem áudio</label>
       </div>
     </div>
 
@@ -228,11 +228,11 @@ Isso mudou minha vida em 30 dias</textarea>
     <div class="preview-label">Preview em tempo real</div>
     <div class="phone"><canvas id="previewCanvas" width="360" height="640"></canvas></div>
     <div class="legend">
-      <span><i class="swatch" style="background:#1f3a5f"></i> Vídeo de fundo</span>
+      <span><i class="swatch" style="background:#1f3a5f"></i> Imagem de fundo</span>
       <span><i class="swatch" style="background:#27ae60"></i> Vídeo menor</span>
       <span><i class="swatch" style="background:#fff"></i> Headline</span>
     </div>
-    <div class="hint">O preview mostra a composição usando os primeiros arquivos carregados. A renderização final usa <code>1080×1920</code> e roda inteiramente no seu navegador.</div>
+    <div class="hint">O preview mostra a composição usando os primeiros arquivos carregados. A imagem de fundo fica estática por toda a duração do vídeo menor. A renderização final usa <code>1080×1920</code> e roda inteiramente no seu navegador.</div>
   </div>
 
 </div>
