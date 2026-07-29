@@ -4,7 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Estúdio de Vídeos em Massa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Oswald:wght@700&family=Montserrat:wght@800;900&family=Poppins:wght@800;900&family=Archivo+Black&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 <style>
   :root{
     --bg: #0b0c0f;
@@ -196,6 +200,20 @@ Isso mudou minha vida em 30 dias</textarea>
         <div class="slider-top"><span>Posição Y do vídeo menor</span><span class="val" id="clipYVal">35%</span></div>
         <input type="range" id="clipYSlider" min="0" max="90" value="35">
       </div>
+      <div class="filerow">
+        <label>Fonte da headline</label>
+        <select id="fontSelect">
+          <option value="'Arial Black', Arial, sans-serif" data-weight="900">Arial Black (padrão)</option>
+          <option value="'Anton', sans-serif" data-weight="400">Anton</option>
+          <option value="'Bebas Neue', sans-serif" data-weight="400">Bebas Neue</option>
+          <option value="'Archivo Black', sans-serif" data-weight="400">Archivo Black</option>
+          <option value="'Montserrat', sans-serif" data-weight="900">Montserrat Black</option>
+          <option value="'Poppins', sans-serif" data-weight="900">Poppins Black</option>
+          <option value="'Oswald', sans-serif" data-weight="700">Oswald Bold</option>
+          <option value="Impact, sans-serif" data-weight="400">Impact</option>
+        </select>
+      </div>
+
       <div class="slider-block">
         <div class="slider-top"><span>Tamanho da fonte</span><span class="val" id="fontVal">55px</span></div>
         <input type="range" id="fontSlider" min="20" max="120" value="55">
@@ -213,7 +231,15 @@ Isso mudou minha vida em 30 dias</textarea>
     </div>
 
     <div class="section">
-      <div class="section-title"><span class="num">04</span> Gerar</div>
+      <div class="section-title"><span class="num">04</span> Formato de saída</div>
+      <select id="formatSelect">
+        <option value="mp4">MP4 (compatível com tudo — mais lento, converte após gravar)</option>
+        <option value="webm">WebM (mais rápido — pode não abrir em alguns apps de celular)</option>
+      </select>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><span class="num">05</span> Gerar</div>
       <button class="generate-btn" id="generateBtn">🎬 GERAR VÍDEOS EM MASSA</button>
       <div class="progress-wrap">
         <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
