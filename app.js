@@ -17,8 +17,10 @@ const state = {
   scalePct: 0.70,
   clipYPct: 0.35,
   fontSize: 55,
+  fontFamily: "'Arial Black', Arial, sans-serif",
   headlineYPct: 0.08,
   audioSource: "clip",
+  outputFormat: "mp4",
 };
 
 // Fundo agora é uma IMAGEM estática (não vídeo). O clipe menor continua sendo <video>.
@@ -54,6 +56,15 @@ const progressFill = document.getElementById("progressFill");
 const statusText = document.getElementById("statusText");
 const previewCanvas = document.getElementById("previewCanvas");
 const pctx = previewCanvas.getContext("2d");
+const fontSelect = document.getElementById("fontSelect");
+const formatSelect = document.getElementById("formatSelect");
+
+fontSelect.addEventListener("change", () => {
+  state.fontFamily = fontSelect.value;
+});
+formatSelect.addEventListener("change", () => {
+  state.outputFormat = formatSelect.value;
+});
 
 // ---------------------------------------------------------------------------
 // Seleção de arquivos
@@ -150,7 +161,7 @@ function wrapText(ctx, text, maxWidth) {
 
 function drawHeadline(ctx, text, canvasW, canvasH, fontSizeAtOutputScale, yPct) {
   const fontSize = fontSizeAtOutputScale;
-  ctx.font = `900 ${fontSize}px 'Arial Black', Arial, sans-serif`;
+  ctx.font = `900 ${fontSize}px ${state.fontFamily}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
 
@@ -257,8 +268,72 @@ function loadImageElement(file) {
   });
 }
 
+// Alguns arquivos (principalmente .webm gravados por outra ferramenta, ou .mp4 com
+// metadados incompletos) reportam video.duration como Infinity/NaN até serem "buscados"
+// uma vez. Sem essa correção, o loop de renderização nunca detecta o fim do clipe e
+// trava o lote inteiro silenciosamente no vídeo problemático — foi isso que fez
+// "sobrarem" vídeos sem gerar. Essa função força o navegador a calcular a duração real.
+function getReliableDuration(video) {
+  return new Promise((resolve) => {
+    if (isFinite(video.duration) && video.duration > 0) {
+      resolve(video.duration);
+      return;
+    }
+    const onTimeUpdate = () => {
+      video.removeEventListener("timeupdate", onTimeUpdate);
+      video.currentTime = 0;
+      if (isFinite(video.duration) && video.duration > 0) {
+        resolve(video.duration);
+      } else {
+        resolve(10); // fallback de segurança para nunca travar indefinidamente
+      }
+    };
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.currentTime = 1e10; // hack conhecido: força o navegador a indexar o arquivo inteiro
+  });
+}
+
 function updateStatus(msg) { statusText.textContent = msg; }
 function updateProgress(fraction) { progressFill.style.width = `${Math.round(fraction * 100)}%`; }
+
+// FFmpeg.wasm é carregado sob demanda (só se o usuário escolher exportar em MP4),
+// já que é um pacote pesado (~25MB) baixado e rodado inteiramente no navegador.
+let ffmpegInstance = null;
+async function getFfmpeg() {
+  if (ffmpegInstance) return ffmpegInstance;
+  const { createFFmpeg } = FFmpeg;
+  ffmpegInstance = createFFmpeg({
+    log: false,
+    corePath: "https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js",
+  });
+  await ffmpegInstance.load();
+  return ffmpegInstance;
+}
+
+async function convertWebmToMp4(webmBlob, fileNameBase) {
+  const ffmpeg = await getFfmpeg();
+  const inputName = `${fileNameBase}.webm`;
+  const outputName = `${fileNameBase}.mp4`;
+
+  const arrayBuffer = await webmBlob.arrayBuffer();
+  ffmpeg.FS("writeFile", inputName, new Uint8Array(arrayBuffer));
+
+  await ffmpeg.run(
+    "-i", inputName,
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "23",
+    "-c:a", "aac",
+    "-pix_fmt", "yuv420p",
+    outputName
+  );
+
+  const data = ffmpeg.FS("readFile", outputName);
+  ffmpeg.FS("unlink", inputName);
+  ffmpeg.FS("unlink", outputName);
+
+  return new Blob([data.buffer], { type: "video/mp4" });
+}
 
 async function renderSingleVideo(backgroundImage, clipVideo, headlineText, audioContext) {
   const canvas = document.createElement("canvas");
@@ -266,7 +341,7 @@ async function renderSingleVideo(backgroundImage, clipVideo, headlineText, audio
   canvas.height = OUTPUT_H;
   const ctx = canvas.getContext("2d");
 
-  const duration = clipVideo.duration; // duração final = duração do vídeo menor (fundo é imagem, não tem duração própria)
+  const duration = await getReliableDuration(clipVideo); // duração final = duração real do vídeo menor
 
   // --- Prepara áudio (Web Audio API) — só existe áudio do vídeo menor, já que o fundo é imagem ---
   const destination = audioContext.createMediaStreamDestination();
@@ -313,32 +388,36 @@ async function renderSingleVideo(backgroundImage, clipVideo, headlineText, audio
   const clipX = (OUTPUT_W - clipW) / 2;
   const clipY = OUTPUT_H * state.clipYPct;
 
-  await new Promise((resolve) => {
-    const startTime = performance.now();
+  await Promise.race([
+    new Promise((resolve) => {
+      const startTime = performance.now();
 
-    function drawFrame() {
-      const elapsed = (performance.now() - startTime) / 1000;
-      if (elapsed >= duration) {
-        resolve();
-        return;
+      function drawFrame() {
+        const elapsed = (performance.now() - startTime) / 1000;
+        if (elapsed >= duration) {
+          resolve();
+          return;
+        }
+
+        ctx.clearRect(0, 0, OUTPUT_W, OUTPUT_H);
+        drawCover(ctx, backgroundImage, 0, 0, OUTPUT_W, OUTPUT_H); // fundo estático, redesenhado a cada frame
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(clipX, clipY, clipW, clipH);
+        ctx.clip();
+        drawCover(ctx, clipVideo, clipX, clipY, clipW, clipH);
+        ctx.restore();
+
+        drawHeadline(ctx, headlineText, OUTPUT_W, OUTPUT_H, state.fontSize, state.headlineYPct);
+
+        requestAnimationFrame(drawFrame);
       }
-
-      ctx.clearRect(0, 0, OUTPUT_W, OUTPUT_H);
-      drawCover(ctx, backgroundImage, 0, 0, OUTPUT_W, OUTPUT_H); // fundo estático, redesenhado a cada frame
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(clipX, clipY, clipW, clipH);
-      ctx.clip();
-      drawCover(ctx, clipVideo, clipX, clipY, clipW, clipH);
-      ctx.restore();
-
-      drawHeadline(ctx, headlineText, OUTPUT_W, OUTPUT_H, state.fontSize, state.headlineYPct);
-
       requestAnimationFrame(drawFrame);
-    }
-    requestAnimationFrame(drawFrame);
-  });
+    }),
+    // Rede de segurança: nunca deixa um clipe travar o lote inteiro por mais que sua duração + 15s
+    new Promise((resolve) => setTimeout(resolve, (duration + 15) * 1000)),
+  ]);
 
   recorder.stop();
   clipVideo.pause();
@@ -368,12 +447,20 @@ generateBtn.addEventListener("click", async () => {
 
     const totalPairs = Math.min(headlines.length, state.clipFiles.length);
     if (headlines.length !== state.clipFiles.length) {
+      const msg = `Você colou ${headlines.length} headline(s) mas selecionou ${state.clipFiles.length} vídeo(s) de recorte.\n\nSerão gerados apenas ${totalPairs} vídeo(s) (o par é feito 1 a 1, e para quando o grupo menor acabar).\n\nSe quiser gerar todos os ${state.clipFiles.length} vídeos, adicione mais headlines até ter a mesma quantidade.`;
+      alert(msg);
       updateStatus(`Aviso: ${headlines.length} headlines e ${state.clipFiles.length} vídeos. Gerando ${totalPairs} vídeo(s) pareados.`);
     }
 
     generateBtn.disabled = true;
     generateBtn.textContent = "Renderizando...";
     updateProgress(0);
+
+    // Garante que a fonte escolhida já está carregada antes de desenhar qualquer frame
+    updateStatus("Carregando fonte selecionada...");
+    try {
+      await document.fonts.load(`900 100px ${state.fontFamily}`);
+    } catch (e) { /* segue mesmo se falhar o preload; o navegador usa fallback */ }
 
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const zip = new JSZip();
@@ -385,13 +472,21 @@ generateBtn.addEventListener("click", async () => {
     const errors = [];
 
     for (let i = 0; i < totalPairs; i++) {
-      const fileName = `video_${String(i + 1).padStart(2, "0")}.webm`;
-      updateStatus(`Renderizando ${i + 1}/${totalPairs}: ${fileName}...`);
+      const fileBase = `video_${String(i + 1).padStart(2, "0")}`;
+      updateStatus(`Renderizando ${i + 1}/${totalPairs}: ${fileBase}...`);
 
       try {
         const clipVideo = await loadVideoElement(state.clipFiles[i]);
-        const blob = await renderSingleVideo(backgroundImage, clipVideo, headlines[i], audioContext);
-        zip.file(fileName, blob);
+        const webmBlob = await renderSingleVideo(backgroundImage, clipVideo, headlines[i], audioContext);
+
+        if (state.outputFormat === "mp4") {
+          updateStatus(`Convertendo ${i + 1}/${totalPairs} para MP4 (pode levar um tempo)...`);
+          const mp4Blob = await convertWebmToMp4(webmBlob, fileBase);
+          zip.file(`${fileBase}.mp4`, mp4Blob);
+        } else {
+          zip.file(`${fileBase}.webm`, webmBlob);
+        }
+
         successCount++;
         URL.revokeObjectURL(clipVideo.src);
       } catch (err) {
@@ -411,7 +506,7 @@ generateBtn.addEventListener("click", async () => {
     a.click();
     URL.revokeObjectURL(zipUrl);
 
-    let summary = `Concluído! ${successCount}/${totalPairs} vídeos gerados com sucesso. Download do .zip iniciado.`;
+    let summary = `Concluído! ${successCount}/${totalPairs} vídeos (.${state.outputFormat}) gerados com sucesso. Download do .zip iniciado.`;
     if (errors.length) summary += `\n${errors.length} erro(s):\n` + errors.join("\n");
     updateStatus(summary);
 
