@@ -284,17 +284,25 @@ function getReliableDuration(video) {
       resolve(video.duration);
       return;
     }
-    const onTimeUpdate = () => {
+
+    let resolved = false;
+    const finish = (value) => {
+      if (resolved) return;
+      resolved = true;
       video.removeEventListener("timeupdate", onTimeUpdate);
+      resolve(value);
+    };
+
+    const onTimeUpdate = () => {
       video.currentTime = 0;
-      if (isFinite(video.duration) && video.duration > 0) {
-        resolve(video.duration);
-      } else {
-        resolve(10); // fallback de segurança para nunca travar indefinidamente
-      }
+      finish(isFinite(video.duration) && video.duration > 0 ? video.duration : 15);
     };
     video.addEventListener("timeupdate", onTimeUpdate);
     video.currentTime = 1e10; // hack conhecido: força o navegador a indexar o arquivo inteiro
+
+    // Rede de segurança: alguns arquivos nunca disparam "timeupdate" nesse hack
+    // (o que travava o lote inteiro antes desta correção). Nunca espera mais que 6s.
+    setTimeout(() => finish(15), 6000);
   });
 }
 
@@ -316,6 +324,18 @@ const NATIVE_MP4_MIME = (() => {
 
 function updateStatus(msg) { statusText.textContent = msg; }
 function updateProgress(fraction) { progressFill.style.width = `${Math.round(fraction * 100)}%`; }
+
+// Envolve qualquer Promise com um limite de tempo — se não resolver a tempo,
+// rejeita em vez de deixar o processo travado para sempre. Usado como rede de
+// segurança geral por vídeo, cobrindo qualquer etapa (carregar, renderizar, converter).
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Tempo esgotado (${label}) após ${ms / 1000}s`)), ms)
+    ),
+  ]);
+}
 
 // FFmpeg.wasm é carregado sob demanda (só se o usuário escolher exportar em MP4),
 // já que é um pacote pesado (~25MB) baixado e rodado inteiramente no navegador.
@@ -406,7 +426,16 @@ async function renderSingleVideo(backgroundImage, clipVideo, headlineText, audio
   // Posiciona o clipe no início e toca (a imagem de fundo não precisa tocar, é estática)
   clipVideo.currentTime = 0;
   clipVideo.loop = false;
-  await clipVideo.play();
+  try {
+    await clipVideo.play();
+  } catch (playError) {
+    // Alguns navegadores bloqueiam autoplay com áudio após várias chamadas em sequência.
+    // Tenta mudo como último recurso — o vídeo ainda avança e é desenhado normalmente,
+    // só perde o áudio desse clipe específico, em vez de travar o lote inteiro.
+    console.warn("play() com áudio falhou, tentando mudo:", playError);
+    clipVideo.muted = true;
+    await clipVideo.play();
+  }
 
   recorder.start();
 
@@ -519,13 +548,21 @@ generateBtn.addEventListener("click", async () => {
       updateStatus(`Renderizando ${i + 1}/${totalPairs}: ${fileBase}...`);
 
       try {
-        const clipVideo = await loadVideoElement(state.clipFiles[i]);
-        const { blob, isNativeMp4 } = await renderSingleVideo(backgroundImage, clipVideo, headlineForIndex(i), audioContext);
+        const clipVideo = await withTimeout(
+          loadVideoElement(state.clipFiles[i]), 30000, "carregar vídeo"
+        );
+        const { blob, isNativeMp4 } = await withTimeout(
+          renderSingleVideo(backgroundImage, clipVideo, headlineForIndex(i), audioContext),
+          180000, // até 3min por vídeo (cobre clipes longos + gravação em tempo real)
+          "renderizar vídeo"
+        );
 
         if (state.outputFormat === "mp4" && !isNativeMp4) {
           // Fallback: navegador não grava mp4 nativamente (ex: Firefox) — converte via FFmpeg
           updateStatus(`Convertendo ${i + 1}/${totalPairs} para MP4 (pode levar um tempo)...`);
-          const mp4Blob = await convertWebmToMp4(blob, fileBase);
+          const mp4Blob = await withTimeout(
+            convertWebmToMp4(blob, fileBase), 180000, "converter para mp4"
+          );
           zip.file(`${fileBase}.mp4`, mp4Blob);
         } else if (state.outputFormat === "mp4") {
           zip.file(`${fileBase}.mp4`, blob); // já veio em mp4 direto da gravação, sem conversão
@@ -537,7 +574,8 @@ generateBtn.addEventListener("click", async () => {
         URL.revokeObjectURL(clipVideo.src);
       } catch (err) {
         console.error(err);
-        errors.push(`Vídeo ${i + 1}: ${err.message}`);
+        errors.push(`Vídeo ${i + 1} (${state.clipFiles[i]?.name || "?"}): ${err.message}`);
+        updateStatus(`Vídeo ${i + 1} falhou (${err.message}) — seguindo para o próximo...`);
       }
 
       updateProgress((i + 1) / totalPairs);
